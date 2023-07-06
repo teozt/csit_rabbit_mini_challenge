@@ -1,7 +1,9 @@
 use mongodb::Collection;
+use mongodb::bson::doc;
 use mongodb::{Client, options::ClientOptions};
 use mongodb::{bson::DateTime};
-use chrono::NaiveDate;
+use chrono::DateTime as ChronosDateTime;
+use chrono::Utc;
 use futures::stream::TryStreamExt;
 use serde::{Serialize, Deserialize};
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
@@ -34,17 +36,23 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
 async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Query<HotelQuery>) -> impl Responder {
     let curr_destination: String = query.destination.to_lowercase();
 
+    let mut modifed_check_in_date = query.checkInDate.clone();
+    modifed_check_in_date.push_str("T00:00:00Z");
+
+    let mut modified_check_out_date = query.checkOutDate.clone();
+    modified_check_out_date.push_str("T00:00:00Z");
+
     // Input validation for dates
-    let converted_check_in_date = NaiveDate::parse_from_str(&query.checkInDate, "%F");
-    let converted_check_out_date = NaiveDate::parse_from_str(&query.checkOutDate, "%F");
+    let converted_check_in_date = modifed_check_in_date.parse::<ChronosDateTime<Utc>>();
+    let converted_check_out_date = modified_check_out_date.parse::<ChronosDateTime<Utc>>();
 
     match converted_check_in_date {
-        Ok(_) => {},
+        Ok(date) => {},
         Err(..) => {
             return HttpResponse::BadRequest().body("Invalid check in date")
         }
     }
-
+    
     match converted_check_out_date {
         Ok(_) => {},
         Err(..) => {
@@ -52,12 +60,29 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
         }
     }
 
+    // Implement filter to get from City and between the dates
+    let filter = doc! {"city": &query.destination,
+                                    "date": {"$gte": converted_check_in_date.unwrap(), 
+                                            "$lte": converted_check_out_date.unwrap()}};
+    let cursor = hotel_collection.find(filter, None).await.unwrap();
+
+    let filtered_data = cursor.try_collect::<Vec<Hotel>>().await.unwrap();
+
+    let mut price_map = std::collections::HashMap::new();
+
+    for hotel in filtered_data {   
+        price_map.entry(hotel.hotelName).and_modify(|price| *price += hotel.price ).or_insert(hotel.price);
+    }
+
+    println!("{:#?}", price_map);
+    println!("{:#?}", price_map.iter().min_by_key(|entry| entry.1).unwrap());
+
     // for hotel in hotel_data.get_ref() {
     //     if hotel.city.eq_ignore_ascii_case(curr_destination.as_str()) {
     //         println!("{:#?}", hotel);
     //         if NaiveDate::parse_from_str(
     //             hotel.date.try_to_rfc3339_string().unwrap().as_str(),
-    //             "%FT%TZ").unwrap() == converted_check_in_date {
+    //             "%FT%TZ").unwrap() == converted_check_in_daste {
     //             println!("{:#?} {}", hotel, converted_check_in_date)
     //         }    
     //     }   
