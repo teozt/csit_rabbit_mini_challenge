@@ -120,13 +120,61 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
 
     // Processing flight query
     // Implement filter to get flights from singapore to city on a date
-    let filter = doc! {"city": &query.destination,
-    "date": {"$gte": converted_check_in_date.unwrap(), 
-            "$lte": converted_check_out_date.unwrap()}};
+    let mut filter = doc! {"srccity": "singapore",
+                                "destcity": &query.destination,
+                                "date": converted_depature_date.unwrap()};
 
+    let collation = Collation::builder().locale("en").strength(CollationStrength::Primary).build();
+    let findoptions = FindOptions::builder().collation(collation).build();
 
+    let depature_cursor = flight_collection.find(filter, findoptions.clone()).await.unwrap();
+    let depature_filtered_data = depature_cursor.try_collect::<Vec<Flight>>().await.unwrap();
 
-    HttpResponse::Ok().body("Hello world!")
+    let mut responses = Vec::new();
+
+    let lowest_depature_flight: Vec<&Flight> ;
+    let lowest_return_flight: Vec<&Flight>;
+
+    if depature_filtered_data.len() != 0 {
+        let lowest_one_depature_flight = depature_filtered_data.iter().min_by_key(|entry| entry.price).unwrap();
+        lowest_depature_flight = depature_filtered_data.iter().filter(|x| { x.price == lowest_one_depature_flight.price }).collect();   
+    }
+    else {
+        lowest_depature_flight = Vec::new()
+    }
+    
+
+    // Implement filter to get flights from city to singapore on a date
+    filter = doc! {"srccity": &query.destination,
+                    "destcity": "Singapore",
+                    "date": converted_return_date.unwrap()};
+    
+    let return_cursor = flight_collection.find(filter, findoptions).await.unwrap();
+    let return_filtered_data = return_cursor.try_collect::<Vec<Flight>>().await.unwrap();
+
+    if return_filtered_data.len() != 0 {
+        let lowest_one_return_flight = return_filtered_data.iter().min_by_key(|entry| entry.price).unwrap();
+        lowest_return_flight = return_filtered_data.iter().filter(|x| { x.price == lowest_one_return_flight.price }).collect();   
+    }
+    else {
+        lowest_return_flight = Vec::new();
+    }
+
+    
+    for depature_flight in &lowest_depature_flight {
+        for return_flight in &lowest_return_flight {
+            let response = FlightResponse { City: query.destination.to_owned(), 
+                                                            DepartureDate: query.departureDate.to_owned(), 
+                                                            DepartureAirline: depature_flight.airlinename.to_owned(), 
+                                                            DepaturePrice: depature_flight.price, 
+                                                            ReturnDate: query.returnDate.to_owned(), 
+                                                            ReturnAirline: return_flight.airlinename.to_owned(), 
+                                                            ReturnPrice: return_flight.price };
+            responses.push(response);
+        }
+    }
+
+    HttpResponse::Ok().json(responses)
 }
 
 #[get("/hotel")]
