@@ -2,15 +2,17 @@ use mongodb::Collection;
 use mongodb::bson::doc;
 use mongodb::{Client, options::ClientOptions};
 use mongodb::{bson::DateTime};
+use mongodb::options::{Collation, FindOptions, CollationStrength};
 use chrono::DateTime as ChronosDateTime;
 use chrono::Utc;
 use futures::stream::TryStreamExt;
 use serde::{Serialize, Deserialize};
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use iso8601_timestamp::Timestamp;
+
+
 
 #[allow(non_snake_case)]
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct HotelQuery {
     checkInDate: String,
     checkOutDate: String,
@@ -18,11 +20,23 @@ pub struct HotelQuery {
 }
 
 #[allow(non_snake_case)]
+#[derive(Debug, Serialize)]
+pub struct HoteResponse {
+    pub City: String,
+    #[serde(rename = "Check In Date")]
+    checkInDate: String,
+    #[serde(rename = "Check Out Date")]
+    checkOutDate: String,
+    Hotel: String,
+    Price: i32
+}
+
+#[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 pub struct FlightQuery {
-    departureDate: Timestamp,
+    departureDate: String,
     destination: String,
-    returnDate: Timestamp
+    returnDate: String
 }
 
 #[get("/flight")]
@@ -34,7 +48,6 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
 
 #[get("/hotel")]
 async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Query<HotelQuery>) -> impl Responder {
-    let curr_destination: String = query.destination.to_lowercase();
 
     let mut modifed_check_in_date = query.checkInDate.clone();
     modifed_check_in_date.push_str("T00:00:00Z");
@@ -47,7 +60,7 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
     let converted_check_out_date = modified_check_out_date.parse::<ChronosDateTime<Utc>>();
 
     match converted_check_in_date {
-        Ok(date) => {},
+        Ok(_) => {},
         Err(..) => {
             return HttpResponse::BadRequest().body("Invalid check in date")
         }
@@ -64,7 +77,11 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
     let filter = doc! {"city": &query.destination,
                                     "date": {"$gte": converted_check_in_date.unwrap(), 
                                             "$lte": converted_check_out_date.unwrap()}};
-    let cursor = hotel_collection.find(filter, None).await.unwrap();
+
+    let collation = Collation::builder().locale("en").strength(CollationStrength::Primary).build();
+    let findoptions = FindOptions::builder().collation(collation).build();
+
+    let cursor = hotel_collection.find(filter, findoptions).await.unwrap();
 
     let filtered_data = cursor.try_collect::<Vec<Hotel>>().await.unwrap();
 
@@ -74,21 +91,23 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
         price_map.entry(hotel.hotelName).and_modify(|price| *price += hotel.price ).or_insert(hotel.price);
     }
 
-    println!("{:#?}", price_map);
-    println!("{:#?}", price_map.iter().min_by_key(|entry| entry.1).unwrap());
-
-    // for hotel in hotel_data.get_ref() {
-    //     if hotel.city.eq_ignore_ascii_case(curr_destination.as_str()) {
-    //         println!("{:#?}", hotel);
-    //         if NaiveDate::parse_from_str(
-    //             hotel.date.try_to_rfc3339_string().unwrap().as_str(),
-    //             "%FT%TZ").unwrap() == converted_check_in_daste {
-    //             println!("{:#?} {}", hotel, converted_check_in_date)
-    //         }    
-    //     }   
-    // }
-
-    HttpResponse::Ok().body("Hello world!")
+    let lowest_hotel = price_map.iter().min_by_key(|entry| entry.1).unwrap();
+    let filtered_iter = price_map.iter().filter(|x| { x.1 == lowest_hotel.1 });
+    
+    let mut responses = Vec::new();
+    for filter_hotel in filtered_iter {
+        let response = HoteResponse { City: query.destination.clone(), 
+                                                    checkInDate: query.checkInDate.clone(), 
+                                                    checkOutDate: query.checkOutDate.clone(), 
+                                                    Hotel: filter_hotel.0.clone(), 
+                                                    Price: filter_hotel.1.clone() };
+        responses.push(response);
+    }
+    
+    
+    
+    
+    HttpResponse::Ok().json(responses)
 }
 
 #[allow(non_snake_case)]
