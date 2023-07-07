@@ -1,7 +1,5 @@
-use mongodb::Collection;
-use mongodb::bson::doc;
-use mongodb::{Client, options::ClientOptions};
-use mongodb::{bson::DateTime};
+use mongodb::{Collection, Client, options::ClientOptions};
+use mongodb::bson::{DateTime, doc};
 use mongodb::options::{Collation, FindOptions, CollationStrength};
 use chrono::DateTime as ChronosDateTime;
 use chrono::Utc;
@@ -9,6 +7,36 @@ use futures::stream::TryStreamExt;
 use serde::{Serialize, Deserialize};
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 
+#[allow(non_snake_case)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FlightData {
+    airline: String,
+    airlineid: i32,
+    srcairport: String,
+    srcairportid: i32,
+    destairport: String,
+    destairportid: i32,
+    codeshare: String,
+    stop: i32,
+    eq: String,
+    airlinename: String,
+    srcairportname: String,
+    srccity: String,
+    destairportname: String,
+    destcity: String,
+    destcountry: String,
+    price: i32,
+    date: DateTime
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HotelData {
+    city: String,
+    hotelName: String,
+    price: i32,
+    date: DateTime
+}
 
 
 #[allow(non_snake_case)]
@@ -46,10 +74,10 @@ pub struct FlightResponse {
     pub City: String,
     #[serde(rename = "Departure Date")]
     DepartureDate: String,
-    #[serde(rename = "Depature Airline")]
+    #[serde(rename = "Departure Airline")]
     DepartureAirline: String,
-    #[serde(rename = "Depature Price")]
-    DepaturePrice: i32,
+    #[serde(rename = "Departure Price")]
+    departurePrice: i32,
     #[serde(rename = "Return Date")]
     ReturnDate: String,
     #[serde(rename = "Return Airline")]
@@ -58,16 +86,16 @@ pub struct FlightResponse {
     ReturnPrice: i32,
 }
 
-async fn validate_flight_dates(depature_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>, return_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>) -> Option<HttpResponse> {
-    let invalid_depature_date: bool;
+async fn validate_flight_dates(departure_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>, return_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>) -> Option<HttpResponse> {
+    let invalid_departure_date: bool;
     let invalid_return_date: bool;
 
-    match depature_date {
+    match departure_date {
         Ok(_) => {
-            invalid_depature_date = false;
+            invalid_departure_date = false;
         },
         Err(..) => {
-            invalid_depature_date = true;
+            invalid_departure_date = true;
         }
     }
     
@@ -80,13 +108,13 @@ async fn validate_flight_dates(depature_date: Result<ChronosDateTime<Utc>, chron
         }
     }
 
-    if invalid_depature_date && invalid_return_date {
+    if invalid_departure_date && invalid_return_date {
         
-        return Some(HttpResponse::BadRequest().body("Invalid depature and return date"))
+        return Some(HttpResponse::BadRequest().body("Invalid departure and return date"))
     }
-    else if invalid_depature_date || invalid_return_date {
-        if invalid_depature_date {
-            return Some(HttpResponse::BadRequest().body("Invalid depature date"))
+    else if invalid_departure_date || invalid_return_date {
+        if invalid_departure_date {
+            return Some(HttpResponse::BadRequest().body("Invalid departure date"))
         }
         if invalid_return_date {
             return Some(HttpResponse::BadRequest().body("Invalid return date"))
@@ -96,8 +124,46 @@ async fn validate_flight_dates(depature_date: Result<ChronosDateTime<Utc>, chron
     return None
 }
 
+async fn validate_hotel_dates(check_in_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>, check_out_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>) -> Option<HttpResponse> {
+    let invalid_check_in_date: bool;
+    let invalid_check_out_date: bool;
+
+    match check_in_date {
+        Ok(_) => {
+            invalid_check_in_date = false;
+        },
+        Err(..) => {
+            invalid_check_in_date = true;
+        }
+    }
+    
+    match check_out_date {
+        Ok(_) => {
+            invalid_check_out_date = false;
+        },
+        Err(..) => {
+            invalid_check_out_date = true;
+        }
+    }
+
+    if invalid_check_in_date && invalid_check_out_date {
+        
+        return Some(HttpResponse::BadRequest().body("Invalid check in and check out date"))
+    }
+    else if invalid_check_in_date || invalid_check_out_date {
+        if invalid_check_in_date {
+            return Some(HttpResponse::BadRequest().body("Invalid check in date"))
+        }
+        if invalid_check_out_date {
+            return Some(HttpResponse::BadRequest().body("Invalid check out date"))
+        }
+    }
+
+    return None
+}
+
 #[get("/flight")]
-async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Query<FlightQuery>) -> impl Responder {
+async fn flight(flight_collection: web::Data<Collection<FlightData>>, query: web::Query<FlightQuery>) -> impl Responder {
     
     let mut modified_departure_date = query.departureDate.clone();
     modified_departure_date.push_str("T00:00:00Z");
@@ -106,10 +172,10 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
     modified_return_date.push_str("T00:00:00Z");
     
     // Input validation for dates
-    let converted_depature_date = modified_departure_date.parse::<ChronosDateTime<Utc>>();
+    let converted_departure_date = modified_departure_date.parse::<ChronosDateTime<Utc>>();
     let converted_return_date = modified_return_date.parse::<ChronosDateTime<Utc>>();
     
-    let error_response = validate_flight_dates(converted_depature_date, converted_return_date).await;
+    let error_response = validate_flight_dates(converted_departure_date, converted_return_date).await;
 
     match error_response {
         None => (),
@@ -122,25 +188,25 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
     // Implement filter to get flights from singapore to city on a date
     let mut filter = doc! {"srccity": "singapore",
                                 "destcity": &query.destination,
-                                "date": converted_depature_date.unwrap()};
+                                "date": converted_departure_date.unwrap()};
 
     let collation = Collation::builder().locale("en").strength(CollationStrength::Primary).build();
     let findoptions = FindOptions::builder().collation(collation).build();
 
-    let depature_cursor = flight_collection.find(filter, findoptions.clone()).await.unwrap();
-    let depature_filtered_data = depature_cursor.try_collect::<Vec<Flight>>().await.unwrap();
+    let departure_cursor = flight_collection.find(filter, findoptions.clone()).await.unwrap();
+    let departure_filtered_data = departure_cursor.try_collect::<Vec<FlightData>>().await.unwrap();
 
     let mut responses = Vec::new();
 
-    let lowest_depature_flight: Vec<&Flight> ;
-    let lowest_return_flight: Vec<&Flight>;
+    let lowest_departure_flight: Vec<&FlightData> ;
+    let lowest_return_flight: Vec<&FlightData>;
 
-    if depature_filtered_data.len() != 0 {
-        let lowest_one_depature_flight = depature_filtered_data.iter().min_by_key(|entry| entry.price).unwrap();
-        lowest_depature_flight = depature_filtered_data.iter().filter(|x| { x.price == lowest_one_depature_flight.price }).collect();   
+    if departure_filtered_data.len() != 0 {
+        let lowest_one_departure_flight = departure_filtered_data.iter().min_by_key(|entry| entry.price).unwrap();
+        lowest_departure_flight = departure_filtered_data.iter().filter(|x| { x.price == lowest_one_departure_flight.price }).collect();   
     }
     else {
-        lowest_depature_flight = Vec::new()
+        lowest_departure_flight = Vec::new()
     }
     
 
@@ -150,7 +216,7 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
                     "date": converted_return_date.unwrap()};
     
     let return_cursor = flight_collection.find(filter, findoptions).await.unwrap();
-    let return_filtered_data = return_cursor.try_collect::<Vec<Flight>>().await.unwrap();
+    let return_filtered_data = return_cursor.try_collect::<Vec<FlightData>>().await.unwrap();
 
     if return_filtered_data.len() != 0 {
         let lowest_one_return_flight = return_filtered_data.iter().min_by_key(|entry| entry.price).unwrap();
@@ -161,12 +227,12 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
     }
 
     
-    for depature_flight in &lowest_depature_flight {
+    for departure_flight in &lowest_departure_flight {
         for return_flight in &lowest_return_flight {
             let response = FlightResponse { City: query.destination.to_owned(), 
                                                             DepartureDate: query.departureDate.to_owned(), 
-                                                            DepartureAirline: depature_flight.airlinename.to_owned(), 
-                                                            DepaturePrice: depature_flight.price, 
+                                                            DepartureAirline: departure_flight.airlinename.to_owned(), 
+                                                            departurePrice: departure_flight.price, 
                                                             ReturnDate: query.returnDate.to_owned(), 
                                                             ReturnAirline: return_flight.airlinename.to_owned(), 
                                                             ReturnPrice: return_flight.price };
@@ -178,7 +244,7 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
 }
 
 #[get("/hotel")]
-async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Query<HotelQuery>) -> impl Responder {
+async fn hotel(hotel_collection: web::Data<Collection<HotelData>>,  query: web::Query<HotelQuery>) -> impl Responder {
 
     let mut modifed_check_in_date = query.checkInDate.clone();
     modifed_check_in_date.push_str("T00:00:00Z");
@@ -190,17 +256,12 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
     let converted_check_in_date = modifed_check_in_date.parse::<ChronosDateTime<Utc>>();
     let converted_check_out_date = modified_check_out_date.parse::<ChronosDateTime<Utc>>();
 
-    match converted_check_in_date {
-        Ok(_) => {},
-        Err(..) => {
-            return HttpResponse::BadRequest().body("Invalid check in date")
-        }
-    }
-    
-    match converted_check_out_date {
-        Ok(_) => {},
-        Err(..) => {
-            return HttpResponse::BadRequest().body("Invalid check out date")
+    let error_response = validate_hotel_dates(converted_check_in_date, converted_check_out_date).await;
+
+    match error_response {
+        None => (),
+        Some(error_response) => {
+            return error_response
         }
     }
 
@@ -214,7 +275,7 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
 
     let cursor = hotel_collection.find(filter, findoptions).await.unwrap();
 
-    let filtered_data = cursor.try_collect::<Vec<Hotel>>().await.unwrap();
+    let filtered_data = cursor.try_collect::<Vec<HotelData>>().await.unwrap();
 
     let mut responses = Vec::new();
 
@@ -246,37 +307,6 @@ async fn hotel(hotel_collection: web::Data<Collection<Hotel>>,  query: web::Quer
     HttpResponse::Ok().json(responses)
 }
 
-#[allow(non_snake_case)]
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Flight {
-    airline: String,
-    airlineid: i32,
-    srcairport: String,
-    srcairportid: i32,
-    destairport: String,
-    destairportid: i32,
-    codeshare: String,
-    stop: i32,
-    eq: String,
-    airlinename: String,
-    srcairportname: String,
-    srccity: String,
-    destairportname: String,
-    destcity: String,
-    destcountry: String,
-    price: i32,
-    date: DateTime
-}
-
-#[allow(non_snake_case)]
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Hotel {
-    city: String,
-    hotelName: String,
-    price: i32,
-    date: DateTime
-}
-
 #[actix_web::main]
 async fn main() -> Result<(), std::io::Error> {
     let client_options = ClientOptions::parse("mongodb+srv://userReadOnly:7ZT817O8ejDfhnBM@minichallenge.q4nve1r.mongodb.net/").await.unwrap();
@@ -287,15 +317,8 @@ async fn main() -> Result<(), std::io::Error> {
 
     // Get Collection handle
     let mongodb_db_handle = mongodb_client.database(mongodb_database_name);
-    let hotels_collection_handle = mongodb_db_handle.collection::<Hotel>("hotels");
-    let flights_collection_handle = mongodb_db_handle.collection::<Flight>("flights");
-
-
-    // let hotels_cursor = hotels_collection_handle.find(None,None).await.unwrap();
-    // let hotel_data = hotels_cursor.try_collect::<Vec<Hotel>>().await.unwrap();
-
-    // let flights_cursor = flights_collection_handle.find(None, None).await.unwrap();
-    // let flight_data = flights_cursor.try_collect::<Vec<Flight>>().await.unwrap();
+    let hotels_collection_handle = mongodb_db_handle.collection::<HotelData>("hotels");
+    let flights_collection_handle = mongodb_db_handle.collection::<FlightData>("flights");
     
     println!("Starting web server after initilializing data");
 
