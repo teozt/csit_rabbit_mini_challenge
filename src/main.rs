@@ -58,8 +58,42 @@ pub struct FlightResponse {
     ReturnPrice: i32,
 }
 
-async fn validate_flight_dates(depature_date: Result<DateTime<Utc>, ParseError>, return_date: Result<DateTime<Utc>, ParseError>) {
+async fn validate_flight_dates(depature_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>, return_date: Result<ChronosDateTime<Utc>, chrono::format::ParseError>) -> Option<HttpResponse> {
+    let invalid_depature_date: bool;
+    let invalid_return_date: bool;
 
+    match depature_date {
+        Ok(_) => {
+            invalid_depature_date = false;
+        },
+        Err(..) => {
+            invalid_depature_date = true;
+        }
+    }
+    
+    match return_date {
+        Ok(_) => {
+            invalid_return_date = false;
+        },
+        Err(..) => {
+            invalid_return_date = true;
+        }
+    }
+
+    if invalid_depature_date && invalid_return_date {
+        
+        return Some(HttpResponse::BadRequest().body("Invalid depature and return date"))
+    }
+    else if invalid_depature_date || invalid_return_date {
+        if invalid_depature_date {
+            return Some(HttpResponse::BadRequest().body("Invalid depature date"))
+        }
+        if invalid_return_date {
+            return Some(HttpResponse::BadRequest().body("Invalid return date"))
+        }
+    }
+
+    return None
 }
 
 #[get("/flight")]
@@ -75,39 +109,22 @@ async fn flight(flight_collection: web::Data<Collection<Flight>>, query: web::Qu
     let converted_depature_date = modified_departure_date.parse::<ChronosDateTime<Utc>>();
     let converted_return_date = modified_return_date.parse::<ChronosDateTime<Utc>>();
     
-    let invalid_depature_date: bool;
-    let invalid_return_date: bool;
+    let error_response = validate_flight_dates(converted_depature_date, converted_return_date).await;
 
-    match converted_depature_date {
-        Ok(_) => {
-            invalid_depature_date = false;
-        },
-        Err(..) => {
-            invalid_depature_date = true;
-        }
-    }
-    
-    match converted_return_date {
-        Ok(_) => {
-            invalid_return_date = false;
-        },
-        Err(..) => {
-            invalid_return_date = true;
+    match error_response {
+        None => (),
+        Some(error_response) => {
+            return error_response
         }
     }
 
-    if invalid_depature_date && invalid_return_date {
-        
-        return HttpResponse::BadRequest().body("Invalid depature and return date")
-    }
-    else if invalid_depature_date || invalid_return_date {
-        if invalid_depature_date {
-            return HttpResponse::BadRequest().body("Invalid depature date")
-        }
-        if invalid_return_date {
-            return HttpResponse::BadRequest().body("Invalid return date")
-        }
-    }
+    // Processing flight query
+    // Implement filter to get flights from singapore to city on a date
+    let filter = doc! {"city": &query.destination,
+    "date": {"$gte": converted_check_in_date.unwrap(), 
+            "$lte": converted_check_out_date.unwrap()}};
+
+
 
     HttpResponse::Ok().body("Hello world!")
 }
